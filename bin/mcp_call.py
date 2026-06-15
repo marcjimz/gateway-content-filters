@@ -3,19 +3,40 @@
 
   bin/mcp_call.py <mcp-service> --list                         # tools/list
   bin/mcp_call.py <mcp-service> <tool> ['<json-args>']         # tools/call
-  bin/mcp_call.py github_mcp merge_pull_request                # -> POLICY_DENIED (no_destructive_ops)
-  bin/mcp_call.py github_mcp list_issues '{"owner":"o","repo":"r"}'
+  bin/mcp_call.py github_mcp merge_pull_request '{}'           # -> POLICY_DENIED (no_destructive_ops)
+  bin/mcp_call.py github_mcp get_me                            # -> real GitHub data (after U2M login)
 
-Path: POST /ai-gateway/mcp-services/<cat>.<schema>.<id>/{tools/call|tools/list}
-A write tool denied by a service policy returns POLICY_DENIED *before* the upstream
-MCP server is contacted — so a denied call never reaches e.g. GitHub. Read/allowed
-tools DO reach the upstream and need its auth (e.g. GitHub U2M login) to succeed.
+Path:  POST <gateway-host>/ai-gateway/mcp-services/<cat>.<schema>.<id>/{tools/call|tools/list}
+Notes: the AI Gateway is on its own host (--host), distinct from the CLI profile host;
+       requests need Accept: application/json, text/event-stream (responses are SSE).
+       A policy-denied write returns POLICY_DENIED *before* the upstream MCP is contacted;
+       allowed/read tools reach upstream and need its auth (e.g. GitHub U2M login).
 """
 from __future__ import annotations
 
 import argparse
 import json
 import subprocess
+
+DEFAULT_HOST = "https://e2-dogfood.staging.cloud.databricks.com"  # dogfood AI Gateway host
+
+
+def token(profile):
+    out = subprocess.run(["databricks", "auth", "token", "-p", profile], capture_output=True, text=True).stdout
+    return json.loads(out)["access_token"]
+
+
+def parse_sse(text):
+    """Gateway returns SSE ('event: message' / 'data: {json}'); fall back to plain JSON."""
+    for line in reversed([l[5:].strip() for l in text.splitlines() if l.startswith("data:")]):
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            pass
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {"raw": text.strip()}
 
 
 def main():
@@ -26,6 +47,7 @@ def main():
     ap.add_argument("--list", action="store_true", help="tools/list instead of tools/call")
     ap.add_argument("--profile", default="dogfood")
     ap.add_argument("--parent", default="bbeal.default")
+    ap.add_argument("--host", default=DEFAULT_HOST, help="AI Gateway host (not the CLI profile host)")
     a = ap.parse_args()
 
     fqn = a.service if a.service.count(".") >= 2 else f"{a.parent}.{a.service}"
@@ -33,16 +55,15 @@ def main():
     params = {} if a.list else {"name": a.tool, "arguments": json.loads(a.args)}
     rpc = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
 
-    p = subprocess.run(
-        ["databricks", "api", "post", f"/ai-gateway/mcp-services/{fqn}/{method}", "-p", a.profile, "--json", json.dumps(rpc)],
+    out = subprocess.run(
+        ["curl", "-sS", "-X", "POST", f"{a.host}/ai-gateway/mcp-services/{fqn}/{method}",
+         "-H", f"Authorization: Bearer {token(a.profile)}",
+         "-H", "Content-Type: application/json",
+         "-H", "Accept: application/json, text/event-stream",
+         "-d", json.dumps(rpc)],
         capture_output=True, text=True,
     )
-    raw = (p.stdout.strip() or p.stderr.strip())
-    s = raw[len("Error:"):].strip() if raw.startswith("Error:") else raw
-    try:
-        print(json.dumps(json.loads(s), indent=2))
-    except json.JSONDecodeError:
-        print(s)
+    print(json.dumps(parse_sse(out.stdout or out.stderr), indent=2))
 
 
 if __name__ == "__main__":
