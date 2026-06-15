@@ -121,7 +121,8 @@ Policies in `service-policies/`: `no_destructive_ops`, `no_egress_tools` (#13 ne
 
 - **Source of truth = git**, applied by API — no console click-ops as the record of truth.
 - **PR = governance approval.** Exemptions carry approver + ticket + expiry in `exceptions/register.yaml`.
-- **Audit** = git history + securable `update_time`/`updated_by` + payload logging (`tracing`/`usage_tracking`).
+- **Guardrail decisions are returned in-band.** A block comes back as a descriptive **`4xx` that names the policy** (`blocked by input policy 'healthcare-safety'`); the calling app handles/logs it with its normal error handling. The gateway does **not** persist a per-guardrail verdict, and it's not its job to log a request that never reached the model.
+- **Audit, independent of the apps:** git history + securable `update_time`/`updated_by`; **`system.ai_gateway.usage`** = central per-call **status ledger** (block `4xx` vs allow `200` vs error `5xx`, with requester/endpoint/timing) so governance can count/trace blocks without trusting each app; **`<name>_payload`** inference table = full request/response for **allowed** traffic (e.g. inspect redaction output). Annotate calls return `200` and are logged like any other allowed call.
 - **CI invariants (`validate.py`):** refs resolve; custom guardrails have prompt+action, native don't; valid modes/phases; **prompt shields always enforce**; **annotate relaxations require a non-expired exemption**; exemptions reference real objects.
 - **Default-deny** (`patient-chat` blocks everything); **exceptions decay** (expired-but-used = CI failure).
 - **Reuse + portability:** one judge/prompt referenced everywhere; the same repo applies to any workspace with the API (or via UI fallback elsewhere).
@@ -141,8 +142,8 @@ flowchart TD
     MERGE --> APPLY["apply.py + render.py<br/>mode annotate maps to dry_run = true"]
     APPLY -->|UC API| LIVE["Live model-service<br/>service_policy dry_run = true on that endpoint"]
     LIVE --> RT{Request at runtime}
-    RT -->|exempt guardrail, dry_run true| LOG[Evaluates + LOGS verdict to payload tables -- does NOT block]
-    RT -->|enforced guardrail, dry_run false| BLK[Blocks if triggered]
+    RT -->|exempt guardrail, dry_run true| LOG[Allowed 200 -- response logged to _payload; app logs output normally]
+    RT -->|enforced guardrail, dry_run false| BLK[Returns 4xx naming the policy -- app handles/logs the error]
     RT -->|prompt shield| BLK
     LIVE -. time passes .-> EXP{expires_at in the past?}
     EXP -->|yes, on next CI run| F3[FAIL build -- committee must re-review]

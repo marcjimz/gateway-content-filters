@@ -8,7 +8,7 @@ destinations:
 judge: system.ai.gpt-5-2              # model_service used by the LLM-judge policies
 tracing: true
 usage_tracking: true
-inference_table: true                 # per-endpoint payload table (request/response + verdicts) — OFF by default on the platform
+inference_table: true                 # per-endpoint payload table (full request/response for allowed traffic) — OFF by default on the platform
 # Demo posture: all policies INPUT-ONLY — dogfood Beta's output-phase (post_call)
 # evaluator intermittently errors on longer generations (see docs/poc-results.md).
 # patient-chat keeps the strict in+out posture as the intended target once Beta stabilizes.
