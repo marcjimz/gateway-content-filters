@@ -8,6 +8,7 @@ destinations:
 judge: system.ai.gpt-5-2
 tracing: true
 usage_tracking: true
+inference_table: true                 # per-endpoint payload table — OFF by default on the platform
 policies:
   - ref: healthcare-safety
     phases: [input, output]

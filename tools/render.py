@@ -42,22 +42,29 @@ def render(ep, guardrails, prompts):
             "rank": 1,
             "options": opts,
         })
-    return {
-        "config": {
-            "destinations": [
-                {
-                    "name": d.get("name", "primary"),
-                    "pay_per_token_config": {"model": f"models/{d['model']}"},
-                    "traffic_percentage": d.get("traffic_percentage", 100),
-                    "type": "DESTINATION_TYPE_PAY_PER_TOKEN_FOUNDATION_MODEL",
-                }
-                for d in ep["destinations"]
-            ],
-            "service_policies": policies,
-            "tracing": {"enabled": bool(ep.get("tracing", True))},
-            "usage_tracking": {"enabled": bool(ep.get("usage_tracking", True))},
-        }
+    config = {
+        "destinations": [
+            {
+                "name": d.get("name", "primary"),
+                "pay_per_token_config": {"model": f"models/{d['model']}"},
+                "traffic_percentage": d.get("traffic_percentage", 100),
+                "type": "DESTINATION_TYPE_PAY_PER_TOKEN_FOUNDATION_MODEL",
+            }
+            for d in ep["destinations"]
+        ],
+        "service_policies": policies,
+        "tracing": {"enabled": bool(ep.get("tracing", True))},
+        "usage_tracking": {"enabled": bool(ep.get("usage_tracking", True))},
     }
+    # Per-endpoint inference (payload) table — OFF by default on the platform, so we
+    # turn it on as code (full request/response + verdicts -> bbeal.default.<name>_payload).
+    if ep.get("inference_table", True):
+        config["inference_table"] = {
+            "enabled": True,
+            "parent": f"schemas/{ep['parent']}",
+            "table_name_prefix": ep["name"],
+        }
+    return {"config": config}
 
 
 def main(argv=None):

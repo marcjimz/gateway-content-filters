@@ -6,8 +6,9 @@ destinations:
   - model: system.ai.databricks-gpt-5-5
     traffic_percentage: 100
 judge: system.ai.gpt-5-2              # model_service used by the LLM-judge policies
-tracing: true                         # payload logging
+tracing: true
 usage_tracking: true
+inference_table: true                 # per-endpoint payload table (request/response + verdicts) — OFF by default on the platform
 # Demo posture: all policies INPUT-ONLY — dogfood Beta's output-phase (post_call)
 # evaluator intermittently errors on longer generations (see docs/poc-results.md).
 # patient-chat keeps the strict in+out posture as the intended target once Beta stabilizes.
