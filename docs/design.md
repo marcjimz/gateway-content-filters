@@ -126,6 +126,28 @@ Policies in `service-policies/`: `no_destructive_ops`, `no_egress_tools` (#13 ne
 - **Default-deny** (`patient-chat` blocks everything); **exceptions decay** (expired-but-used = CI failure).
 - **Reuse + portability:** one judge/prompt referenced everywhere; the same repo applies to any workspace with the API (or via UI fallback elsewhere).
 
+### Exception flow (what triggers what)
+
+A relaxation is only ever *applied* via the endpoint binding (`mode: annotate` → `dry_run:true`). The register entry is the **approval record + the CI gate that lets that binding exist** — and the `expires_at` is the only thing git-history alone can't enforce.
+
+```mermaid
+flowchart TD
+    REQ[Project needs relaxed safety] --> CMTE[AI Governance Committee approves + ticket]
+    CMTE --> PR["Single PR<br/>(a) endpoint binding: mode = annotate<br/>(b) register entry: endpoint, guardrail,<br/>approved_by, ticket, expires_at"]
+    PR --> CI{validate.py CI gate}
+    CI -->|annotate without a matching, non-expired entry| F1[FAIL build]
+    CI -->|annotate on a prompt shield -- always_block| F2[FAIL build]
+    CI -->|backed + non-expired + shields still enforce| MERGE[Merge to git]
+    MERGE --> APPLY["apply.py + render.py<br/>mode annotate maps to dry_run = true"]
+    APPLY -->|UC API| LIVE["Live model-service<br/>service_policy dry_run = true on that endpoint"]
+    LIVE --> RT{Request at runtime}
+    RT -->|exempt guardrail, dry_run true| LOG[Evaluates + LOGS verdict to payload tables -- does NOT block]
+    RT -->|enforced guardrail, dry_run false| BLK[Blocks if triggered]
+    RT -->|prompt shield| BLK
+    LIVE -. time passes .-> EXP{expires_at in the past?}
+    EXP -->|yes, on next CI run| F3[FAIL build -- committee must re-review]
+```
+
 ---
 
 ## 7. Testing & evaluation

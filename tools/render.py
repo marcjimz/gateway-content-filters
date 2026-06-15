@@ -18,9 +18,15 @@ from _policy import HANDLER, PHASE
 
 def render(ep, guardrails, prompts):
     """Pure: endpoint spec -> {config:{...}} API body."""
+    from collections import Counter
+
+    # policy names must be unique within a model-service; if a guardrail is bound
+    # more than once (e.g. enforce input + annotate output), disambiguate by phase.
+    ref_counts = Counter(b["ref"] for b in ep["policies"])
     policies = []
     for i, b in enumerate(ep["policies"], start=1):
         gd = guardrails[b["ref"]]
+        name = gd["name"] if ref_counts[b["ref"]] == 1 else f"{gd['name']}-{'-'.join(b['phases'])}"
         opts = {
             "dry_run": "true" if b["mode"] == "annotate" else "false",
             "model_service": f"model-services/{ep['judge']}",
@@ -30,7 +36,7 @@ def render(ep, guardrails, prompts):
             opts["action"] = gd["action"]
             opts["instruction"] = prompts.get(gd["prompt_file"], "")
         policies.append({
-            "name": gd["name"],
+            "name": name,
             "handler": HANDLER[gd["type"]],
             "policy_type": "POLICY_TYPE_BUILTIN",
             "rank": 1,
