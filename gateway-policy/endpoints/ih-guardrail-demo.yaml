@@ -8,16 +8,19 @@ destinations:
 judge: system.ai.gpt-5-2              # model_service used by the LLM-judge policies
 tracing: true                         # payload logging
 usage_tracking: true
+# Demo posture: all policies INPUT-ONLY — dogfood Beta's output-phase (post_call)
+# evaluator intermittently errors on longer generations (see docs/poc-results.md).
+# patient-chat keeps the strict in+out posture as the intended target once Beta stabilizes.
 policies:
   - ref: healthcare-safety
-    phases: [input, output]
+    phases: [input]
     mode: enforce
   - ref: phi
-    phases: [input, output]
+    phases: [input]
     mode: enforce
   - ref: jailbreak
     phases: [input]
     mode: enforce
   - ref: pii
-    phases: [input]                   # input-only: output mask_pii is flaky in Beta
+    phases: [input]
     mode: enforce

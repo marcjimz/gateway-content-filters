@@ -1,41 +1,45 @@
 # Service Policies (WS3 — agent action governance)
 
-MCP **service policies** are Unity Catalog SQL functions, attached to a registered
-MCP in Unity AI Gateway, evaluated **before every tool call** (allow / deny / consent).
-Unlike the v2 guardrails, these are **config-as-code today** — plain `CREATE FUNCTION`
-SQL, deployable via SQL/CLI/DABs and CI-testable.
+MCP **service policies** are Unity Catalog SQL functions (transpiled to CEL), attached to
+a registered **MCP service** in Unity AI Gateway, evaluated **before every tool call**
+(ALLOW / DENY / ASK). Config-as-code today: `CREATE FUNCTION` SQL + API attach.
 
-## Verified contract
+## Verified end-to-end on dogfood (2026-06-15)
 
-```sql
-CREATE OR REPLACE FUNCTION <catalog>.<schema>.<policy>(actor VARIANT, context VARIANT)
-RETURNS STRUCT<result STRING, reason STRING>
-RETURN CASE WHEN <condition> THEN NAMED_STRUCT('result','deny','reason','...')
-            ELSE NAMED_STRUCT('result','allow','reason','') END;
+```bash
+# 1. Schema-level HTTP connection to the MCP server (U2M OAuth via UI, or API)
+#    -> connections/<cat>.<schema>.<conn>
+
+# 2. Create the MCP service (a UC securable) pointing at the connection
+databricks api post -p dogfood \
+  "/api/2.1/unity-catalog/mcp-services?parent=schemas/<cat>.<schema>&mcp_service_id=github_mcp" \
+  --json '{"config":{"connection":{"name":"connections/<cat>.<schema>.<conn>"},"include_tool_selectors":[]}}'
+
+# 3. Deploy the policy function (CEL form — see *.sql)
+
+# 4. Attach it (rank-ordered; rank 1 wins ties)
+databricks api patch -p dogfood \
+  "/api/2.1/unity-catalog/mcp-services/<cat>.<schema>.github_mcp?update_mask=config.service_policies" \
+  --json '{"config":{"service_policies":[
+    {"name":"no_destructive_ops","policy_type":"POLICY_TYPE_CUSTOM",
+     "handler":"functions/<cat>.<schema>.no_destructive_ops","rank":1}]}}'
 ```
 
-- `context:tool.name::STRING` — the tool being called
-- `context:tool.arguments` — its arguments (VARIANT)
-- `actor:…` — caller identity
-- `result` ∈ `allow` | `deny` | `consent`
+## Policy function contract (CEL-transpilable)
+
+- Signature: `(event VARIANT, config VARIANT) RETURNS VARIANT LANGUAGE SQL`
+- Inputs: `event:type::string` = `request`(on-call)/`response`(on-result); `event:context.tool.name::string`; `event:context.tool.arguments`
+- Return: `to_variant_object(named_struct('result','DENY|ALLOW|ASK','reason','...'))`
+- Allowed: CASE/IF, comparisons, `IN`, `LIKE`, STARTSWITH/ENDSWITH/CONTAINS, COALESCE, CAST
+- NOT allowed: subqueries, BETWEEN, aggregates, lambdas, variadic CONCAT → **keep `reason` static**
 
 ## Policies here → IH line items
 
 | Function | Effect | Line item |
 |---|---|---|
-| `no_destructive_ops` | deny delete/drop/truncate/merge | defense-in-depth |
-| `no_unsafe_code_exec` | deny code-interpreter tools (e.g. `system.ai.python_exec`) | defense-in-depth |
+| `no_destructive_ops` | deny push/merge/delete GitHub tools | defense-in-depth |
+| `no_unsafe_code_exec` | deny code-interpreter tools (`python_exec`) | defense-in-depth |
 | `no_egress_tools` | deny web/internet/external-send tools | #13 network, #15 DLP |
 
-## Open items to confirm in BUILDER before relying on these
-
-1. **Arg convention** — public blogs use `(actor, context)` with `context:tool.name`;
-   some internal tickets show `(event, config)` with `event:context.tool.name`.
-   Confirm which the current BUILDER backend accepts.
-2. **`actor` schema** — exact field for caller identity (user / principal / groups).
-3. **Attach mechanism** — how a policy is bound to an MCP (UI / SQL / API).
-4. **Table lookups** — whether a service-policy UDF may query an approvals table
-   (for principal-gated allow). If yes, upgrade the blanket denies to approval-gated
-   (reusing the approver+expiry pattern from `gateway-policy/exceptions/`).
-
-Verify-then-author, same as WS1.
+Note: built-in content guardrails (safety/PII/jailbreak) attach to **model-services** as
+`POLICY_TYPE_BUILTIN` handlers; these CUSTOM CEL policies attach to **mcp-services**.
