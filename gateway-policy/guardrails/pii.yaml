@@ -1,0 +1,5 @@
+# Reusable guardrail: PII detection/redaction. NATIVE handler.
+# NOTE: output-phase mask_pii intermittently errors in Beta — bind input-only for now.
+name: pii
+type: pii                   # -> handler: system.ai.mask_pii (native)
+enforcement: configurable

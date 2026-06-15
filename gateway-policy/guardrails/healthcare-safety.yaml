@@ -1,0 +1,8 @@
+# Reusable guardrail: Azure-parity harm classifier, healthcare-tuned.
+# Maps to a model-services service_policy with handler system.ai.invoke_llm_judge.
+name: healthcare-safety
+type: custom                 # custom LLM judge -> handler: system.ai.invoke_llm_judge
+action: block                # block | transform
+prompt_file: prompts/healthcare_safety.md   # -> options.instruction
+enforcement: configurable
+relaxation_requires_exemption: true   # annotate/relaxation needs a register entry

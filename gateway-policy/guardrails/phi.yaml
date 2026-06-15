@@ -1,0 +1,7 @@
+# Reusable guardrail: PHI detection/redaction (no native handler exists -> custom judge).
+name: phi
+type: custom                 # -> handler: system.ai.invoke_llm_judge
+action: transform            # redact in place
+prompt_file: prompts/phi.md
+enforcement: configurable
+relaxation_requires_exemption: true

@@ -1,0 +1,23 @@
+# Model-service (v2 AI Gateway endpoint) — the consolidated demo on dogfood.
+# Deploy with: python tools/apply.py apply ih-guardrail-demo
+name: ih-guardrail-demo
+parent: bbeal.default                 # catalog.schema (UC securable parent)
+destinations:
+  - model: system.ai.databricks-gpt-5-5
+    traffic_percentage: 100
+judge: system.ai.gpt-5-2              # model_service used by the LLM-judge policies
+tracing: true                         # payload logging
+usage_tracking: true
+policies:
+  - ref: healthcare-safety
+    phases: [input, output]
+    mode: enforce
+  - ref: phi
+    phases: [input, output]
+    mode: enforce
+  - ref: jailbreak
+    phases: [input]
+    mode: enforce
+  - ref: pii
+    phases: [input]                   # input-only: output mask_pii is flaky in Beta
+    mode: enforce

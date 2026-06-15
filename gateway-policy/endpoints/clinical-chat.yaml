@@ -1,0 +1,25 @@
+# Clinical assistant — healthcare-tolerant; output-side safety annotated (exemption-backed).
+name: clinical-chat
+parent: bbeal.default
+destinations:
+  - model: system.ai.databricks-gpt-5-5
+    traffic_percentage: 100
+judge: system.ai.gpt-5-2
+tracing: true
+usage_tracking: true
+policies:
+  - ref: healthcare-safety
+    phases: [input]
+    mode: enforce
+  - ref: healthcare-safety
+    phases: [output]
+    mode: annotate            # log-only on output; requires exemption (register.yaml)
+  - ref: phi
+    phases: [input, output]
+    mode: enforce
+  - ref: jailbreak
+    phases: [input]
+    mode: enforce
+  - ref: pii
+    phases: [input]
+    mode: enforce

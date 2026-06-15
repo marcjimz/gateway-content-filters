@@ -1,0 +1,5 @@
+# Reusable guardrail: prompt-shield (direct + indirect injection).
+# NATIVE handler — no prompt needed. Always block (never annotate).
+name: jailbreak
+type: jailbreak              # -> handler: system.ai.block_jailbreak (native)
+enforcement: always_block

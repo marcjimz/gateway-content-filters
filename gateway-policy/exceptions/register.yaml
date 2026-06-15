@@ -1,0 +1,24 @@
+# Governance-committee exemption register.
+# Any binding that relaxes a guardrail flagged `relaxation_requires_exemption`
+# (annotate mode or omission) MUST have a matching, non-expired entry here.
+# validate.py fails CI if a relaxation is unbacked or its exemption has expired.
+#
+# Match key: (endpoint, guardrail). `relaxation` is informational.
+exemptions:
+  - endpoint: clinical-chat
+    guardrail: healthcare-safety
+    relaxation: annotate (output phase only)
+    reason: Reduce clinician workflow friction while output prompt is tuned.
+    approved_by: TBD (AI Governance Committee)
+    ticket: IH-GOV-0000          # placeholder — replace with real approval ref
+    effective_from: 2026-06-12
+    expires_at: 2026-12-31
+
+  - endpoint: research-sandbox
+    guardrail: healthcare-safety
+    relaxation: annotate
+    reason: Approved research project; safety in observe-only mode.
+    approved_by: TBD (AI Governance Committee)
+    ticket: IH-GOV-0000          # placeholder — replace with real approval ref
+    effective_from: 2026-06-12
+    expires_at: 2026-12-31
