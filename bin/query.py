@@ -21,7 +21,7 @@ def main():
     ap.add_argument("prompt")
     ap.add_argument("--profile", default="dogfood")
     ap.add_argument("--parent", default="bbeal.default", help="catalog.schema for short names")
-    ap.add_argument("--max-tokens", type=int, default=256)
+    ap.add_argument("--max-tokens", type=int, default=2048)  # gpt-5.x reasoning tokens count against this; keep headroom
     a = ap.parse_args()
 
     model = a.endpoint if a.endpoint.count(".") >= 2 else f"{a.parent}.{a.endpoint}"
