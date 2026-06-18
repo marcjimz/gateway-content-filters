@@ -1,7 +1,7 @@
 # Research sandbox — governance-committee-approved exemption. Safety annotated.
 # Prompt shields STILL block (always_block, non-negotiable).
 name: research-sandbox
-parent: bbeal.default
+parent: main.default
 destinations:
   - model: system.ai.databricks-gpt-5-5
     traffic_percentage: 100

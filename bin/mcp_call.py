@@ -42,12 +42,12 @@ def parse_sse(text):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("service", help="short name (-> bbeal.default.<name>) or full cat.schema.name")
+    ap.add_argument("service", help="short name (-> main.default.<name>) or full cat.schema.name")
     ap.add_argument("tool", nargs="?", help="tool name (omit with --list)")
     ap.add_argument("args", nargs="?", default="{}", help="JSON tool arguments")
     ap.add_argument("--list", action="store_true", help="tools/list instead of tools/call")
     ap.add_argument("--profile", default="DEFAULT")
-    ap.add_argument("--parent", default="bbeal.default")
+    ap.add_argument("--parent", default="main.default")
     ap.add_argument("--host", default=DEFAULT_HOST, help="AI Gateway host (not the CLI profile host)")
     a = ap.parse_args()
     if not a.host:

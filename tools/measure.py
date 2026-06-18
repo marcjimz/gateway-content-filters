@@ -3,7 +3,7 @@
 false-negative / flakiness per case. Use to compare judge models before/after a swap.
 
 Usage:
-  python tools/measure.py --model bbeal.default.ih-guardrail-demo --reps 5 --profile $PROFILE
+  python tools/measure.py --model main.default.ih-guardrail-demo --reps 5 --profile $PROFILE
 """
 from __future__ import annotations
 

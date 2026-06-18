@@ -57,7 +57,7 @@ def render(ep, guardrails, prompts):
         "usage_tracking": {"enabled": bool(ep.get("usage_tracking", True))},
     }
     # Per-endpoint inference (payload) table — OFF by default on the platform, so we
-    # turn it on as code (full request/response + verdicts -> bbeal.default.<name>_payload).
+    # turn it on as code (full request/response + verdicts -> main.default.<name>_payload).
     if ep.get("inference_table", True):
         config["inference_table"] = {
             "enabled": True,

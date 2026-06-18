@@ -35,7 +35,7 @@ Everything is **config-as-code in this repo, applied to the target workspace via
 
 Both gateway resources are **Unity Catalog securables** with full public CRUD via `/api/2.1/unity-catalog/...`, confirmed end-to-end on the target workspace (render from repo → API create → verify → delete).
 
-> **Workspace:** canonical = **the target workspace** (`<workspace-host>`, storage `bbeal.default`). The model-services/mcp-services public API is **the target workspace-only today**; on workspaces without it, fall back to UI config or wait for GA (the repo's `render.py` output still drives a manual apply). customer-prod availability is an open item (§9).
+> **Workspace:** canonical = **the target workspace** (`<workspace-host>`, storage `main.default`). The model-services/mcp-services public API is **the target workspace-only today**; on workspaces without it, fall back to UI config or wait for GA (the repo's `render.py` output still drives a manual apply). customer-prod availability is an open item (§9).
 
 ---
 

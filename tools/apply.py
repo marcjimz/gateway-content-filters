@@ -73,6 +73,7 @@ def main(argv=None):
     ap.add_argument("endpoint")
     ap.add_argument("--name", help="override model_service_id (deploy under a different id)")
     ap.add_argument("--profile", default="DEFAULT")
+    ap.add_argument("--parent", help="override the spec's catalog.schema (keeps your catalog out of the repo)")
     args = ap.parse_args(argv)
 
     policy = load()
@@ -80,6 +81,8 @@ def main(argv=None):
         print(f"unknown endpoint: {args.endpoint}", file=sys.stderr)
         return 2
     ep = policy["endpoints"][args.endpoint]
+    if args.parent:
+        ep["parent"] = args.parent
     fn = full_name(ep, args.name)
     body = render(ep, policy["guardrails"], policy["prompts"])
 

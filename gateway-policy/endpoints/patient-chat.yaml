@@ -1,6 +1,6 @@
 # Patient-facing chatbot — strictest posture, everything enforced (blocks).
 name: patient-chat
-parent: bbeal.default
+parent: main.default
 destinations:
   - model: system.ai.databricks-gpt-5-5
     traffic_percentage: 100

@@ -52,4 +52,4 @@ docs/design.md · docs/poc-results.md
 
 ## Status
 
-✅ Config-as-code proven on **the target workspace** (`bbeal.default`): render → API create → verify → delete round-trips. ✅ Service-policy SQL functions deployed. ⚠️ Beta caveats: the public model-services API is the target workspace-only today (customer-prod TBD); native output-`mask_pii` is flaky (bind PII input-only). Judge model + thresholds are documented productionization levers (see `docs/poc-results.md`).
+✅ Config-as-code proven on **the target workspace** (`main.default`): render → API create → verify → delete round-trips. ✅ Service-policy SQL functions deployed. ⚠️ Beta caveats: the public model-services API is the target workspace-only today (customer-prod TBD); native output-`mask_pii` is flaky (bind PII input-only). Judge model + thresholds are documented productionization levers (see `docs/poc-results.md`).

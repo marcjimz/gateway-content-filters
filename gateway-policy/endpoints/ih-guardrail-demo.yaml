@@ -1,7 +1,7 @@
 # Model-service (v2 AI Gateway endpoint) — the consolidated demo on the target workspace.
 # Deploy with: python tools/apply.py apply ih-guardrail-demo
 name: ih-guardrail-demo
-parent: bbeal.default                 # catalog.schema (UC securable parent)
+parent: main.default                 # catalog.schema (UC securable parent)
 destinations:
   - model: system.ai.databricks-gpt-5-5
     traffic_percentage: 100
