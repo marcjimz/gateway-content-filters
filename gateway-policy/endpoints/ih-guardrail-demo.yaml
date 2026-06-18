@@ -1,4 +1,4 @@
-# Model-service (v2 AI Gateway endpoint) — the consolidated demo on dogfood.
+# Model-service (v2 AI Gateway endpoint) — the consolidated demo on the target workspace.
 # Deploy with: python tools/apply.py apply ih-guardrail-demo
 name: ih-guardrail-demo
 parent: bbeal.default                 # catalog.schema (UC securable parent)
@@ -9,7 +9,7 @@ judge: system.ai.gpt-5-2              # model_service used by the LLM-judge poli
 tracing: true
 usage_tracking: true
 inference_table: true                 # per-endpoint payload table (full request/response for allowed traffic) — OFF by default on the platform
-# Demo posture: all policies INPUT-ONLY — dogfood Beta's output-phase (post_call)
+# Demo posture: all policies INPUT-ONLY — the gated-beta workspace's output-phase (post_call)
 # evaluator intermittently errors on longer generations (see docs/poc-results.md).
 # patient-chat keeps the strict in+out posture as the intended target once Beta stabilizes.
 policies:

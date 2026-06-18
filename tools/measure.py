@@ -3,7 +3,7 @@
 false-negative / flakiness per case. Use to compare judge models before/after a swap.
 
 Usage:
-  python tools/measure.py --model bbeal.default.ih-guardrail-demo --reps 5 --profile dogfood
+  python tools/measure.py --model bbeal.default.ih-guardrail-demo --reps 5 --profile $PROFILE
 """
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ def main(argv=None):
 
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--model", required=True)
-    ap.add_argument("--profile", default="dogfood")
+    ap.add_argument("--profile", default="DEFAULT")
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--corpus", default=str(CORPUS))
     args = ap.parse_args(argv)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render a git endpoint spec into the model-services API config body (dogfood).
+"""Render a git endpoint spec into the model-services API config body (the target workspace).
 
 The output is the exact `{config:{...}}` body accepted by:
   POST /api/2.1/unity-catalog/model-services?parent=schemas/<cat>.<schema>&model_service_id=<name>

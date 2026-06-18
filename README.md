@@ -1,12 +1,12 @@
 # Gateway Content Filters
 
-Azure AI Content Safety parity on the **Databricks Unity AI Gateway** for **Intermountain Health's** Azure OpenAI → Databricks Foundation Models migration — as **governed config-as-code**.
+Azure AI Content Safety parity on the **Databricks Unity AI Gateway** for **the customer's** Azure OpenAI → Databricks Foundation Models migration — as **governed config-as-code**.
 
 Covers: Violence / Hate / Self-harm / Sexual (healthcare-tuned), Prompt Shields (jailbreak + indirect), PII/PHI — each **block** or **annotate**, with governance-committee exceptions. Plus **MCP service policies** (agent action governance) as SQL UC functions.
 
-## Config-as-code, for real (dogfood)
+## Config-as-code, for real (the target workspace)
 
-On the dogfood workspace, an AI Gateway endpoint is a **Unity Catalog securable** (`MODEL_SERVICE`) with full CRUD via the public UC API. So the repo is the source of truth and **`apply.py` deploys via API — no UI**:
+On the target workspace, an AI Gateway endpoint is a **Unity Catalog securable** (`MODEL_SERVICE`) with full CRUD via the public UC API. So the repo is the source of truth and **`apply.py` deploys via API — no UI**:
 
 ```bash
 pip install -r requirements.txt
@@ -37,7 +37,7 @@ docs/design.md · docs/poc-results.md
 
 ## Requirement → model
 
-| IH requirement | Where |
+| Requirement | Where |
 |---|---|
 | Violence/Hate/Self-harm/Sexual + severity | `healthcare-safety` (custom judge, prompt) |
 | Healthcare-context tolerance | the same prompt's "DO NOT flag" carve-outs |
@@ -52,4 +52,4 @@ docs/design.md · docs/poc-results.md
 
 ## Status
 
-✅ Config-as-code proven on **dogfood** (`bbeal.default`): render → API create → verify → delete round-trips. ✅ Service-policy SQL functions deployed. ⚠️ Beta caveats: the public model-services API is dogfood-only today (IH-prod TBD); native output-`mask_pii` is flaky (bind PII input-only). Judge model + thresholds are documented productionization levers (see `docs/poc-results.md`).
+✅ Config-as-code proven on **the target workspace** (`bbeal.default`): render → API create → verify → delete round-trips. ✅ Service-policy SQL functions deployed. ⚠️ Beta caveats: the public model-services API is the target workspace-only today (customer-prod TBD); native output-`mask_pii` is flaky (bind PII input-only). Judge model + thresholds are documented productionization levers (see `docs/poc-results.md`).

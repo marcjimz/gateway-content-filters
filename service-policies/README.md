@@ -4,21 +4,21 @@ MCP **service policies** are Unity Catalog SQL functions (transpiled to CEL), at
 a registered **MCP service** in Unity AI Gateway, evaluated **before every tool call**
 (ALLOW / DENY / ASK). Config-as-code today: `CREATE FUNCTION` SQL + API attach.
 
-## Verified end-to-end on dogfood (2026-06-15)
+## Verified end-to-end on the target workspace (2026-06-15)
 
 ```bash
 # 1. Schema-level HTTP connection to the MCP server (U2M OAuth via UI, or API)
 #    -> connections/<cat>.<schema>.<conn>
 
 # 2. Create the MCP service (a UC securable) pointing at the connection
-databricks api post -p dogfood \
+databricks api post -p $PROFILE \
   "/api/2.1/unity-catalog/mcp-services?parent=schemas/<cat>.<schema>&mcp_service_id=github_mcp" \
   --json '{"config":{"connection":{"name":"connections/<cat>.<schema>.<conn>"},"include_tool_selectors":[]}}'
 
 # 3. Deploy the policy function (CEL form — see *.sql)
 
 # 4. Attach it (rank-ordered; rank 1 wins ties)
-databricks api patch -p dogfood \
+databricks api patch -p $PROFILE \
   "/api/2.1/unity-catalog/mcp-services/<cat>.<schema>.github_mcp?update_mask=config.service_policies" \
   --json '{"config":{"service_policies":[
     {"name":"no_destructive_ops","policy_type":"POLICY_TYPE_CUSTOM",
@@ -33,7 +33,7 @@ databricks api patch -p dogfood \
 - Allowed: CASE/IF, comparisons, `IN`, `LIKE`, STARTSWITH/ENDSWITH/CONTAINS, COALESCE, CAST
 - NOT allowed: subqueries, BETWEEN, aggregates, lambdas, variadic CONCAT → **keep `reason` static**
 
-## Policies here → IH line items
+## Policies here → customer line items
 
 | Function | Effect | Line item |
 |---|---|---|

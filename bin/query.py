@@ -3,7 +3,7 @@
 
   bin/query.py <endpoint> "<prompt>"             # short name -> bbeal.default.<endpoint>
   bin/query.py <cat>.<schema>.<name> "<prompt>"  # or a full 3-part name
-  bin/query.py ih-guardrail-demo "..." --profile dogfood --max-tokens 300
+  bin/query.py ih-guardrail-demo "..." --profile $PROFILE --max-tokens 300
 
 Allowed requests print the chat-completion JSON; blocked requests print the
 guardrail decision (which names the policy that fired).
@@ -19,7 +19,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("endpoint", help="short name (-> bbeal.default.<name>) or full cat.schema.name")
     ap.add_argument("prompt")
-    ap.add_argument("--profile", default="dogfood")
+    ap.add_argument("--profile", default="DEFAULT")
     ap.add_argument("--parent", default="bbeal.default", help="catalog.schema for short names")
     ap.add_argument("--max-tokens", type=int, default=2048)  # gpt-5.x reasoning tokens count against this; keep headroom
     a = ap.parse_args()

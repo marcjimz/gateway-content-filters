@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply gateway policy to live model-services via the Unity Catalog API (dogfood).
+"""Apply gateway policy to live model-services via the Unity Catalog API (the target workspace).
 
 This is the real config-as-code applier — git spec -> API, no UI. CRUD confirmed:
   CREATE  POST   /api/2.1/unity-catalog/model-services?parent=schemas/<cat>.<schema>&model_service_id=<id>
@@ -24,7 +24,7 @@ import sys
 from render import render
 
 
-def _api(method, path, body=None, profile="dogfood"):
+def _api(method, path, body=None, profile="DEFAULT"):
     cmd = ["databricks", "api", method, path, "-p", profile]
     if body is not None:
         cmd += ["--json", json.dumps(body)]
@@ -72,7 +72,7 @@ def main(argv=None):
     ap.add_argument("action", choices=["get", "create", "delete", "apply", "diff"])
     ap.add_argument("endpoint")
     ap.add_argument("--name", help="override model_service_id (deploy under a different id)")
-    ap.add_argument("--profile", default="dogfood")
+    ap.add_argument("--profile", default="DEFAULT")
     args = ap.parse_args(argv)
 
     policy = load()

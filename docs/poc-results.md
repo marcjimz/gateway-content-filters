@@ -19,7 +19,7 @@ The custom **`healthcare-safety` judge performed well** — it allowed clinical 
 
 ## Known issues (accepted for PoC)
 
-- **Output-phase (`post_call`) policy evaluation is flaky on dogfood Beta.** Longer clinical
+- **Output-phase (`post_call`) policy evaluation is flaky on the target workspace Beta.** Longer clinical
   generations intermittently fail with `Response evaluation failed for output policy '<name>'`
   — observed across `pii` (native `mask_pii`), `phi`, and `healthcare-safety` (LLM judges),
   interchangeably across retries. It's an output-evaluation **infra** failure, not a guardrail
@@ -27,9 +27,9 @@ The custom **`healthcare-safety` judge performed well** — it allowed clinical 
   Workaround for clean demos: bind content policies **input-only**. Trade-off: loses output-side
   moderation (catching harmful *model output*). **Logged as product feedback.**
 - (Earlier, on BUILDER w/ `gpt-5-nano` judge) the native Jailbreak guardrail also non-deterministically
-  false-positived on clinical content — mitigated by using a stronger judge (`gpt-5-2` on dogfood).
+  false-positived on clinical content — mitigated by using a stronger judge (`gpt-5-2` on the target workspace).
 
-## Productionization levers (deferred — for IH's team)
+## Productionization levers (deferred — for the customer's team)
 
 Reliability is **not** a PoC goal; these are the knobs to pull for production:
 1. **Stronger judge model** — swap evaluator from `gpt-5-nano` → e.g. `gpt-5-mini` / `claude-haiku-4-5` / larger. Per-guardrail `judge_endpoint` is already version-controlled in our specs.

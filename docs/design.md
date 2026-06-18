@@ -1,14 +1,14 @@
 # Gateway Content Filters — Design
 
 **Status:** Draft for review
-**Owners:** Databricks Field Engineering (Brennan Beal) · Intermountain Health (Aniket Patil, Mark Nielsen)
+**Owners:** Databricks Field Engineering · Customer security & MLOps
 **Last updated:** 2026-06-15
 
 ---
 
 ## 1. Context
 
-Intermountain Health (IH) is migrating AI workloads from **Azure OpenAI** to **Databricks Foundation Models** and needs **Azure AI Content Safety parity** on Databricks Unity AI Gateway. IH's cybersecurity org treats **governed config-as-code** (versioned, reviewable, auditable, no drift) as a hard requirement.
+The customer is migrating AI workloads from **Azure OpenAI** to **Databricks Foundation Models** and needs **Azure AI Content Safety parity** on Databricks Unity AI Gateway. the customer's cybersecurity org treats **governed config-as-code** (versioned, reviewable, auditable, no drift) as a hard requirement.
 
 **Requirements**
 1. Harm categories — **Violence, Hate, Self-harm, Sexual** — with severity thresholds.
@@ -17,7 +17,7 @@ Intermountain Health (IH) is migrating AI workloads from **Azure OpenAI** to **D
 4. **Governance-committee exceptions** — approved projects may relax safety.
 5. **Healthcare-context awareness** — clinical content (surgery, exams, anatomy) must not trip safety filters. *The strategic prize: shrinks the exception backlog.*
 6. **PII & PHI** detection + redaction.
-7. **Agent action governance** — limit what agents can *do* via MCP tools (network egress, destructive ops, data exfiltration). *(Aniket's "defense in depth" emphasis.)*
+7. **Agent action governance** — limit what agents can *do* via MCP tools (network egress, destructive ops, data exfiltration). *(the security team's defense-in-depth emphasis)*
 
 **Non-goals:** adversarial red-teaming framework (PyRIT — separate testing workstream); latency optimization (deprioritized — fidelity first); Microsoft 365 Copilot DLP (a CASB/Purview control, not Databricks — see §8).
 
@@ -25,7 +25,7 @@ Intermountain Health (IH) is migrating AI workloads from **Azure OpenAI** to **D
 
 ## 2. Solution at a glance
 
-Everything is **config-as-code in this repo, applied to dogfood via the Unity Catalog API** — no UI. Defense-in-depth in three layers:
+Everything is **config-as-code in this repo, applied to the target workspace via the Unity Catalog API** — no UI. Defense-in-depth in three layers:
 
 | Layer | What | UC resource | Repo |
 |---|---|---|---|
@@ -33,9 +33,9 @@ Everything is **config-as-code in this repo, applied to dogfood via the Unity Ca
 | **Agent action policies** (what's *done*) | allow/deny/ask on MCP tool calls | `mcp-services` + UC functions | `service-policies/` |
 | **Testing & evaluation** | corpus + adversarial behavior tests | — | `tests/`, `tools/` |
 
-Both gateway resources are **Unity Catalog securables** with full public CRUD via `/api/2.1/unity-catalog/...`, confirmed end-to-end on dogfood (render from repo → API create → verify → delete).
+Both gateway resources are **Unity Catalog securables** with full public CRUD via `/api/2.1/unity-catalog/...`, confirmed end-to-end on the target workspace (render from repo → API create → verify → delete).
 
-> **Workspace:** canonical = **dogfood** (`dogfood.staging.databricks.com`, storage `bbeal.default`). The model-services/mcp-services public API is **dogfood-only today**; on workspaces without it, fall back to UI config or wait for GA (the repo's `render.py` output still drives a manual apply). IH-prod availability is an open item (§9).
+> **Workspace:** canonical = **the target workspace** (`<workspace-host>`, storage `bbeal.default`). The model-services/mcp-services public API is **the target workspace-only today**; on workspaces without it, fall back to UI config or wait for GA (the repo's `render.py` output still drives a manual apply). customer-prod availability is an open item (§9).
 
 ---
 
@@ -113,7 +113,7 @@ PATCH /api/2.1/unity-catalog/mcp-services/<fqn>?update_mask=config.service_polic
           "handler":"functions/<cat>.<schema>.<fn>","rank":1}]}}
 ```
 
-Policies in `service-policies/`: `no_destructive_ops`, `no_egress_tools` (#13 network / #15 DLP), `no_unsafe_code_exec` (e.g. `python_exec`). Verified on dogfood: `github_mcp` created + `no_destructive_ops` attached; unit-test `merge_pull_request`→DENY, `list_issues`→ALLOW.
+Policies in `service-policies/`: `no_destructive_ops`, `no_egress_tools` (#13 network / #15 DLP), `no_unsafe_code_exec` (e.g. `python_exec`). Verified on the target workspace: `github_mcp` created + `no_destructive_ops` attached; unit-test `merge_pull_request`→DENY, `list_issues`→ALLOW.
 
 ---
 
@@ -162,7 +162,7 @@ flowchart TD
 
 ## 8. Defense-in-depth: full-suite coverage
 
-IH's 18-item control matrix collapses into the three layers, with one honest carve-out:
+the customer's 18-item control matrix collapses into the three layers, with one honest carve-out:
 
 | Layer | Covers (tracker items) |
 |---|---|
@@ -175,9 +175,9 @@ IH's 18-item control matrix collapses into the three layers, with one honest car
 
 ## 9. PoC findings & productionization levers
 
-- **Output-phase (`post_call`) policy evaluation is flaky on dogfood Beta** — longer generations intermittently `Response evaluation failed for output policy '<name>'` (seen on `pii`, `phi`, `healthcare-safety`). Infra, not config/content. **Workaround:** demo endpoint is input-only; `patient-chat` keeps strict in+out as the target once Beta stabilizes. *Logged as product feedback.* (See `docs/poc-results.md`.)
+- **Output-phase (`post_call`) policy evaluation is flaky on the target workspace Beta** — longer generations intermittently `Response evaluation failed for output policy '<name>'` (seen on `pii`, `phi`, `healthcare-safety`). Infra, not config/content. **Workaround:** demo endpoint is input-only; `patient-chat` keeps strict in+out as the target once Beta stabilizes. *Logged as product feedback.* (See `docs/poc-results.md`.)
 - **Judge model** — `system.ai.gpt-5-2` (a stronger judge than the `gpt-5-nano` first tried on BUILDER, which false-positived on clinical content). Judge choice is a per-policy, version-controlled lever.
-- **Public model-services/mcp-services API is dogfood-only today** — confirm availability on IH's workspace (gated-beta enrollment / GA timing); UI or render-driven manual apply is the fallback.
+- **Public model-services/mcp-services API is the target workspace-only today** — confirm availability on the customer's workspace (gated-beta enrollment / GA timing); UI or render-driven manual apply is the fallback.
 - **Open:** exemption tickets/approvers (placeholders); PHI depth (prompt-judge vs +NER per HIPAA posture); confirm no model traffic bypasses the gateway; live tool-call-through-MCP denial demo (needs U2M login + MCP-client wiring).
 
 ---
@@ -195,7 +195,7 @@ tests/corpus.yaml · docs/{design.md,poc-results.md} · .github/workflows/valida
 
 ## Sources
 - [Configure Unity AI Gateway endpoints (Beta)](https://docs.databricks.com/aws/en/ai-gateway/configure-endpoints-beta)
-- [MCP services (preview)](https://preview.docs.databricks.com/pr-2039458/aws/en/generative-ai/agent-framework/mcp-services)
-- [Create a service policy (preview)](https://preview.docs.databricks.com/pr-2039458/aws/en/data-governance/unity-catalog/service-policies/create-service-policy)
-- [Moderate a model service with guardrails (preview tutorial)](https://preview.docs.databricks.com/pr-2039458/aws/en/data-governance/unity-catalog/ai-governance/moderate-tutorial)
+- [MCP services (preview)](https://docs.databricks.com/aws/generative-ai/agent-framework/mcp-services)
+- [Create a service policy (preview)](https://docs.databricks.com/aws/data-governance/unity-catalog/service-policies/create-service-policy)
+- [Moderate a model service with guardrails (preview tutorial)](https://docs.databricks.com/aws/data-governance/unity-catalog/ai-governance/moderate-tutorial)
 - [Stop Rogue AI: UC secures agent actions](https://www.databricks.com/blog/stop-rogue-ai-how-unity-catalog-secures-your-agent-actions)

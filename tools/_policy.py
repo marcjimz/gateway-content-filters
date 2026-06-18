@@ -1,4 +1,4 @@
-"""Shared loading + maps for the gateway policy (dogfood model-services schema).
+"""Shared loading + maps for the gateway policy (model-services schema).
 
 A model-service (v2 AI Gateway endpoint) is a Unity Catalog securable. Its config:
 

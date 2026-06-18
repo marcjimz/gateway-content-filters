@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Runtime guardrail test harness — fires the corpus at a live model-service.
 
-Invokes via the CLI (dogfood auth works there; curl-bearer 303s to /login):
+Invokes via the CLI (CLI auth works there; curl-bearer 303s to /login):
   databricks api post /ai-gateway/mlflow/v1/chat/completions -p <profile> --json {...}
 with model = the 3-part UC name (e.g. bbeal.default.ih-guardrail-demo).
 
@@ -9,7 +9,7 @@ Distinguishes three outcomes: blocked (guardrail decision), allowed, and
 eval-error (a policy's evaluation itself failed — infra/Beta, not a decision).
 
 Usage:
-  python tools/test_guardrails.py --model bbeal.default.ih-guardrail-demo --profile dogfood
+  python tools/test_guardrails.py --model bbeal.default.ih-guardrail-demo --profile $PROFILE
 """
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def main(argv=None):
 
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--model", required=True, help="3-part UC name, e.g. bbeal.default.ih-guardrail-demo")
-    ap.add_argument("--profile", default="dogfood")
+    ap.add_argument("--profile", default="DEFAULT")
     ap.add_argument("--corpus", default=str(CORPUS))
     args = ap.parse_args(argv)
 
