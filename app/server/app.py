@@ -36,7 +36,13 @@ load_tools(mcp_server)
 # handshake), which the AI Gateway invocation path and horizontally scaled
 # Databricks Apps both require. path="/" so that mounting under "/mcp" (below)
 # serves the endpoint at /mcp and /mcp/ without a localhost slash-redirect.
-mcp_app = mcp_server.http_app(path="/", stateless_http=True)
+# json_response=True: return the JSON-RPC response as a single application/json
+# body instead of a text/event-stream SSE frame. The AI Playground's native UC
+# MCP client (connection base_path /mcp) fails to extract the response event
+# from the stateless SSE stream on forwarded ALLOW calls ("SSE stream closed
+# without a JSON-RPC response event"); a plain JSON body sidesteps that framing.
+# The mcp SDK client and the gateway proxy both accept the JSON body unchanged.
+mcp_app = mcp_server.http_app(path="/", stateless_http=True, json_response=True)
 
 combined_app = FastAPI(
     title="Combined Policy Demo MCP App",
