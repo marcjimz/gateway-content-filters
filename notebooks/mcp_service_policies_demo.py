@@ -78,18 +78,12 @@ dbutils.widgets.text("governed_service", "demo_mcp_governed", "Governed mcp-serv
 dbutils.widgets.text(
     "app_url", "https://policy-demo-mcp-7474655909926918.aws.databricksapps.com",
     "MCP app base URL")
-# Scenario 4 addendum: reachable stand-in for an external security API (e.g. a
-# Zscaler / prompt-injection scanner). google.com is used only to prove live egress
-# from a UC function; point this at your real security endpoint in production.
-dbutils.widgets.text("ext_security_host", "https://www.google.com",
-                     "External security API host (S4 illustration)")
 
 CATALOG = dbutils.widgets.get("catalog")
 SCHEMA = dbutils.widgets.get("schema")
 GOV = f"{CATALOG}.{SCHEMA}.{dbutils.widgets.get('governed_service')}"  # policies attached here
 OPEN = f"{CATALOG}.{SCHEMA}.{dbutils.widgets.get('open_service')}"     # ungoverned (baseline)
 APP_URL = dbutils.widgets.get("app_url").rstrip("/")
-EXT_SECURITY_HOST = dbutils.widgets.get("ext_security_host").rstrip("/")
 
 # Gateway host == workspace host on this deployment.
 WORKSPACE_URL = spark.conf.get("spark.databricks.workspaceUrl")
@@ -612,145 +606,6 @@ print_policy("policy_04_injection")
 run_scenario("policy_04_injection", "p4",
              positive=("get_record", {"record_id": "P-1001"}),
              negative=("get_untrusted_doc", {"doc_id": "D-1"}))
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Scenario 4b — calling out to an external security service (Zscaler-style)
-# MAGIC The quarantine rule above is the deterministic, in-gateway control. Some customers
-# MAGIC also want the gateway/app layer to **call an external security API** (a Zscaler /
-# MAGIC prompt-injection scanner / DLP service) to score untrusted content before it is
-# MAGIC trusted. On Databricks that outbound call is a **Unity Catalog HTTP connection** +
-# MAGIC the built-in `http_request` SQL function, wrapped in a UC function.
-# MAGIC
-# MAGIC > **Hard constraint (validated):** `http_request` **cannot** live inside a service
-# MAGIC > policy — the policy body must transpile to CEL, and any policy that calls
-# MAGIC > `http_request` (or `ai_query`) fails attach with *"SQL cannot be transpiled to
-# MAGIC > CEL."* So the external-scan pattern is a **UC function / app-layer** control that
-# MAGIC > runs *alongside* the deterministic policy, not a replacement for it. The policy is
-# MAGIC > the enforcement gate; the external call is enrichment/scoring.
-# MAGIC
-# MAGIC The cell below proves the outbound path is real: it creates a UC HTTP connection to
-# MAGIC `EXT_SECURITY_HOST` (defaults to `google.com` purely as a reachable stand-in — point
-# MAGIC it at your real scanner in production), wraps `http_request` in a UC function, invokes
-# MAGIC it, and shows the live HTTP status + a slice of the response body.
-
-# COMMAND ----------
-
-# Reachable stand-in for an external security/DLP API. A bare HTTP connection defaults
-# to OAuth DCR discovery (fails on non-OAuth hosts); supplying bearer_token skips DCR.
-# Swap host + auth for your real scanner (e.g. Zscaler / a prompt-injection endpoint).
-_conn = "s4_ext_security_conn"
-_scan_fn = f"{CATALOG}.{SCHEMA}.s4_scan_external"
-spark.sql(f"""
-CREATE CONNECTION IF NOT EXISTS {_conn} TYPE HTTP
-OPTIONS (host '{EXT_SECURITY_HOST}', port '443', base_path '/', bearer_token 'none')
-""")
-spark.sql(f"""
-CREATE OR REPLACE FUNCTION {_scan_fn}(payload STRING)
-RETURNS STRUCT<status_code INT, body_head STRING>
-RETURN
-  SELECT named_struct(
-    'status_code', resp.status_code,
-    'body_head', substr(resp.text, 1, 160))
-  FROM (SELECT http_request(
-          conn => '{_conn}', method => 'GET', path => '/') AS resp)
-""")
-scan = spark.sql(
-    f"SELECT {_scan_fn}('untrusted document body to scan') AS r").collect()[0]["r"]
-print(f"external security API call -> HTTP {scan['status_code']}")
-print(f"  response body (head): {scan['body_head'][:120]}")
-assert scan["status_code"] == 200, (
-    f"expected the external security API to return 200, got {scan['status_code']}")
-print("outbound egress from a UC function is live — wire this to your real scanner.")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Scenario 4c — proof: an `http_request` policy **cannot** be the gate (live)
-# MAGIC The cell above proved the outbound call works at the *function* layer. The obvious next
-# MAGIC question is: *can we just put that scanner call inside a policy so the gateway blocks on
-# MAGIC the scanner's verdict?* The answer is **no**, and this cell proves it live rather than
-# MAGIC asserting it. A policy body must transpile to CEL (a small, side-effect-free expression
-# MAGIC language); `http_request` makes a network call and has no CEL equivalent, so **attach is
-# MAGIC rejected**.
-# MAGIC
-# MAGIC We try **both** shapes and expect both to fail identically:
-# MAGIC 1. `http_request` **directly** in the policy body.
-# MAGIC 2. `http_request` **hidden behind a wrapper UC function** the policy calls — the
-# MAGIC    transpiler inlines the wrapper and still rejects it (indirection does not help).
-# MAGIC
-# MAGIC > **Takeaway (architecture):** the enforcement *gate* is deterministic CEL (no I/O, no
-# MAGIC > latency, provable). An external scanner is **enrichment** that runs at the app / UC
-# MAGIC > function layer *alongside* the gate — e.g. score content, write a verdict to a table
-# MAGIC > or tool argument, then a deterministic policy blocks on that verdict. Self-verifying:
-# MAGIC > this cell **asserts the attach fails** with the transpile error.
-
-# COMMAND ----------
-
-def _try_attach_raw(handler_fqn, policy_name):
-    """Attempt a raw policy attach WITHOUT raising; return (ok, message). Used to prove
-    an http_request policy is rejected at attach time (transpile-to-CEL failure)."""
-    body = {"config": {"service_policies": [{
-        "name": policy_name, "policy_type": "POLICY_TYPE_CUSTOM",
-        "handler": f"functions/{handler_fqn}", "rank": 1}]}}
-    r = requests.patch(
-        f"{GATEWAY_HOST}/api/2.1/unity-catalog/mcp-services/{GOV}?update_mask=config.service_policies",
-        headers=_JSON_HDRS, data=json.dumps(body), timeout=60)
-    return r.ok, f"HTTP {r.status_code}: {r.text[:200]}"
-
-
-# Ensure the connection exists (idempotent) so the scanner policy functions compile.
-spark.sql(f"""
-CREATE CONNECTION IF NOT EXISTS {_conn} TYPE HTTP
-OPTIONS (host '{EXT_SECURITY_HOST}', port '443', base_path '/', bearer_token 'none')
-""")
-
-# (1) http_request DIRECTLY in the policy body.
-_p_direct = f"{CATALOG}.{SCHEMA}.policy_ext_scan_direct"
-spark.sql(f"""
-CREATE OR REPLACE FUNCTION {_p_direct}(event VARIANT, config VARIANT)
-RETURNS VARIANT LANGUAGE SQL
-RETURN CASE
-  WHEN event:type::string = 'request'
-   AND (SELECT http_request(conn => '{_conn}', method => 'GET', path => '/').status_code) = 200
-  THEN to_variant_object(named_struct('result','DENY','reason','External scanner flagged content.'))
-  ELSE to_variant_object(named_struct('result','ALLOW','reason','')) END""")
-
-# (2) http_request hidden behind a wrapper UC function the policy calls.
-_p_wrap_fn = f"{CATALOG}.{SCHEMA}.ext_scan_status"
-spark.sql(f"""
-CREATE OR REPLACE FUNCTION {_p_wrap_fn}(payload STRING)
-RETURNS INT
-RETURN (SELECT http_request(conn => '{_conn}', method => 'GET', path => '/').status_code)""")
-_p_wrap = f"{CATALOG}.{SCHEMA}.policy_ext_scan_wrap"
-spark.sql(f"""
-CREATE OR REPLACE FUNCTION {_p_wrap}(event VARIANT, config VARIANT)
-RETURNS VARIANT LANGUAGE SQL
-RETURN CASE
-  WHEN event:type::string = 'request'
-   AND {_p_wrap_fn}(event:context.tool.arguments.text::string) = 200
-  THEN to_variant_object(named_struct('result','DENY','reason','External scanner flagged content.'))
-  ELSE to_variant_object(named_struct('result','ALLOW','reason','')) END""")
-
-for _fqn, _label in ((_p_direct, "http_request directly in policy"),
-                     (_p_wrap, "http_request behind a wrapper UC function")):
-    ok, msg = _try_attach_raw(_fqn, "p_ext_scan_attempt")
-    print(f"  attach [{_label}] -> {'ATTACHED?!' if ok else 'REJECTED'}: {msg}")
-    assert not ok, f"expected attach to be rejected for {_fqn}, but it succeeded"
-    assert "transpiled to CEL" in msg, f"expected transpile-to-CEL rejection, got: {msg}"
-
-print("proven: an http_request policy cannot be the enforcement gate "
-      "(both direct and wrapper forms rejected at attach) — external scan is an "
-      "app/function-layer control alongside the deterministic policy.")
-
-# Clean up the illustration objects (idempotent). A rejected attach never changes the
-# service's policy set, so the next scenario's attach() still starts from a clean slate.
-spark.sql(f"DROP FUNCTION IF EXISTS {_p_direct}")
-spark.sql(f"DROP FUNCTION IF EXISTS {_p_wrap}")
-spark.sql(f"DROP FUNCTION IF EXISTS {_p_wrap_fn}")
-spark.sql(f"DROP FUNCTION IF EXISTS {_scan_fn}")
-spark.sql(f"DROP CONNECTION IF EXISTS {_conn}")
 
 # COMMAND ----------
 
