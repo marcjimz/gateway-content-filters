@@ -17,8 +17,40 @@
 # MAGIC **Two Beta behaviors to know (validated on this workspace):**
 # MAGIC 1. `DENY` and `ASK` both surface to the caller as JSON-RPC error **-32003**; the
 # MAGIC    policy `reason` string is the only differentiator.
-# MAGIC 2. The gateway caches a service's compiled policy set aggressively — this notebook
-# MAGIC    **sleeps ~45s after every attach/detach** before calling. That is expected.
+# MAGIC 2. The gateway caches a service's compiled policy set and applies an attach after a
+# MAGIC    non-deterministic delay. To stay **deterministic and repeatable**, this notebook
+# MAGIC    **polls the endpoint until the new policy is provably live** (positive ALLOWs and
+# MAGIC    negative BLOCKs) before asserting — no blind fixed sleep. Warm-up adds ~30–90s/scenario.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Scenario map — what each policy proves & the customer requirement it closes
+# MAGIC
+# MAGIC Each scenario attaches one SQL policy to the governed MCP service and shows an **allowed**
+# MAGIC vs. **blocked** call. Every scenario maps to a control the customer's AI-security
+# MAGIC assessment originally scoped **Partial** — this demo shows the gateway closing that gap.
+# MAGIC
+# MAGIC | # | Scenario | Policy | Customer requirement (scoped _Partial_) |
+# MAGIC |---|----------|--------|------------------------------------------|
+# MAGIC | 1 | Deterministic allowlist (deny-by-default) | `policy_01_allowlist` | Shadow AI Detection & Governance |
+# MAGIC | 2 | PII/PHI DLP on tool input | `policy_02_phi_dlp` | PII & PHI Detection and Redaction |
+# MAGIC | 3 | Content filtering (harmful/toxic) | `policy_03_content_filter` | Threat Detection for Azure OpenAI (Prompt Shield) |
+# MAGIC | 4 | Indirect prompt-injection quarantine | `policy_04_injection` | Groundedness Detection Capability |
+# MAGIC | 5 | Audit trail of tool calls | `policy_05_audit` | AI Hub Audit Logs / Prompt & Response Logging |
+# MAGIC | 6 | Destructive ops deny | `policy_06_no_destructive` | Quarantine / Terminate Risky Agents (auto-deny) |
+# MAGIC | 7 | Data-exfiltration / egress deny | `policy_07_no_egress` | Insider Risk Detection for AI Usage Anomalies |
+# MAGIC | 8 | Escalate-to-human (ASK) | `policy_08_ask_human` | Quarantine / Terminate Risky Agents (HITL angle) |
+# MAGIC
+# MAGIC **What `run_scenario()` does:** it attaches one policy to the governed service, then
+# MAGIC **polls until the policy is provably live** (the positive call ALLOWs _and_ the negative
+# MAGIC call BLOCKs — deterministic, no blind sleep), clears the app request-log, re-runs the
+# MAGIC positive and negative calls, prints both verdicts, and **asserts** `POS == ALLOW` and
+# MAGIC `NEG == BLOCK`. A failed assert halts the notebook — so a clean run is itself proof that
+# MAGIC every enforcement verdict is correct.
+# MAGIC
+# MAGIC > Tip: the cell right before each scenario calls `print_policy(...)` so you can read the
+# MAGIC > exact SQL rule being enforced before the scenario runs.
 
 # COMMAND ----------
 
@@ -57,8 +89,15 @@ WORKSPACE_URL = spark.conf.get("spark.databricks.workspaceUrl")
 GATEWAY_HOST = f"https://{WORKSPACE_URL}"
 TOKEN = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()  # noqa: E501
 
-# Gateway policy-set cache settle time after a PATCH attach/detach.
+# The gateway caches a service's compiled policy set and reflects an attach/detach
+# after a non-deterministic propagation delay. Rather than a blind fixed sleep (a
+# gamble that makes scenarios flaky), we POLL the governed endpoint until the new
+# policy is provably live — see wait_until_enforced(). SETTLE is only used by the
+# audit tap (Scenario 5), whose ALLOW-all policy has no observable verdict flip to
+# poll on and whose correctness does not depend on enforcement timing.
 SETTLE = 45
+POLL_EVERY = 8        # seconds between readiness probes
+POLL_TIMEOUT = 300    # hard cap; propagation is typically well under 90s
 
 HDRS = {
     "Authorization": f"Bearer {TOKEN}",
@@ -165,12 +204,36 @@ def show(label, verdict):
         print(f"  {label:8} -> BLOCK[{verdict['code']}]  {verdict['reason'][:110]}")
 
 
+def wait_until_enforced(positive, negative):
+    """Poll the governed endpoint until the freshly-attached policy is provably live:
+    the positive call ALLOWs AND the negative call BLOCKs. This is the deterministic
+    replacement for a blind fixed sleep — the gateway's policy-set cache propagates
+    after a non-deterministic delay, so we probe the actual steady-state verdicts
+    instead of guessing a duration. Requiring BOTH conditions also guards against a
+    stale *previous* policy giving a false-ready signal on the negative alone.
+    Returns (seconds_waited, ready: bool); on timeout the caller's asserts surface it."""
+    waited = 0
+    while waited <= POLL_TIMEOUT:
+        p = gw(GOV, positive[0], positive[1])
+        n = gw(GOV, negative[0], negative[1])
+        if p["verdict"] == "ALLOW" and n["verdict"] == "BLOCK":
+            return waited, True
+        time.sleep(POLL_EVERY)
+        waited += POLL_EVERY
+    return waited, False
+
+
 def run_scenario(policy_fn, policy_name, positive, negative, neg_verdict="BLOCK"):
-    """Attach one policy, settle, then run the positive and negative calls on the governed
-    service. `positive`/`negative` are (tool, args) tuples. Prints a compact result block."""
-    print(f"attaching {policy_fn} ... (settle {SETTLE}s for gateway cache)")
+    """Attach one policy, wait until it is provably enforced, then run the positive and
+    negative calls on the governed service. `positive`/`negative` are (tool, args) tuples.
+    Deterministic & repeatable: the scenario never asserts until the gateway reflects the
+    new policy (or POLL_TIMEOUT elapses). Prints a compact result block."""
+    print(f"attaching {policy_fn} ... (polling until enforced)")
     attach(policy_fn, policy_name)
-    time.sleep(SETTLE)
+    waited, ready = wait_until_enforced(positive, negative)
+    print(f"  policy live after ~{waited}s" if ready
+          else f"  WARNING: not enforced after {waited}s — asserting anyway")
+    # Clean, logged run for display + assert + negative-proof log semantics.
     app_clear_log()
     pos = gw(GOV, positive[0], positive[1])
     neg = gw(GOV, negative[0], negative[1])
@@ -287,6 +350,13 @@ for name, ddl in POLICIES.items():
     spark.sql(ddl)
     print(f"created {name}")
 
+
+def print_policy(name):
+    """Print the SQL body of a policy so you can inspect exactly what will be enforced
+    before the scenario attaches and runs it."""
+    print(f"# {name}")
+    print(POLICIES[name].strip())
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -313,6 +383,17 @@ else:
 # MAGIC A hardcoded allowlist of known-safe tools; everything else is denied. Pure rule, no model.
 # MAGIC - **Positive:** `echo` is on the allowlist → ALLOW
 # MAGIC - **Negative:** `admin_reset` is not → DENY
+# MAGIC
+# MAGIC > **Customer requirement — originally scoped _Partial_** · *Shadow AI Detection & Governance*
+# MAGIC > "Identifies unauthorized AI service usage and enforces approved model policies."
+# MAGIC > **Sheet gap:** "Detection capabilities exist but **blocking not enabled**."
+# MAGIC > **How this closes it:** a deterministic deny-by-default allowlist evaluated *at the
+# MAGIC > gateway* turns detection into enforcement — any tool not explicitly approved is blocked
+# MAGIC > before it runs, no endpoint agent required.
+
+# COMMAND ----------
+
+print_policy("policy_01_allowlist")
 
 # COMMAND ----------
 
@@ -328,6 +409,18 @@ run_scenario("policy_01_allowlist", "p1",
 # MAGIC reaches the server. Regex-free, deterministic.
 # MAGIC - **Positive:** benign clinical query → ALLOW
 # MAGIC - **Negative:** query carrying an SSN → DENY
+# MAGIC
+# MAGIC > **Customer requirement — originally scoped _Partial_** · *PII & PHI Detection and Redaction*
+# MAGIC > "Detects and redacts PII and PHI in AI model inputs and outputs to prevent data leakage."
+# MAGIC > **Sheet gap:** "RegEx-based detection currently in place… **EDM implementation pending**;
+# MAGIC > baseline DLP is proxy-dependent and limited to supported services."
+# MAGIC > **How this closes it:** the SSN-shape rule executes inline at the gateway *before* the
+# MAGIC > call reaches the model/app — enforcement doesn't depend on downstream EDM, labeling
+# MAGIC > accuracy, or a specific proxy path.
+
+# COMMAND ----------
+
+print_policy("policy_02_phi_dlp")
 
 # COMMAND ----------
 
@@ -343,6 +436,19 @@ run_scenario("policy_02_phi_dlp", "p2",
 # MAGIC model-service semantic safety judge.
 # MAGIC - **Positive:** benign text → ALLOW
 # MAGIC - **Negative:** harmful-intent text → DENY
+# MAGIC
+# MAGIC > **Customer requirement — originally scoped _Partial_** · *Threat Detection for Azure OpenAI*
+# MAGIC > "Real-time alerts for unauthorized API calls, policy violations, and suspicious model
+# MAGIC > access patterns."
+# MAGIC > **Sheet gap:** "Multi-layer approach… Microsoft Foundry has AI Prompt Shield solutions
+# MAGIC > but **nothing has been tested yet**."
+# MAGIC > **How this closes it:** a deterministic keyword filter gives a zero-latency, provably
+# MAGIC > enforced first line ahead of (not instead of) a semantic safety judge — a tested,
+# MAGIC > policy-as-code control that ships today.
+
+# COMMAND ----------
+
+print_policy("policy_03_content_filter")
 
 # COMMAND ----------
 
@@ -359,6 +465,18 @@ run_scenario("policy_03_content_filter", "p3",
 # MAGIC never reaches the agent.
 # MAGIC - **Positive:** `get_record` (trusted source) → ALLOW
 # MAGIC - **Negative:** `get_untrusted_doc` (untrusted source) → DENY
+# MAGIC
+# MAGIC > **Customer requirement — originally scoped _Partial_** · *Groundedness Detection Capability*
+# MAGIC > "Validates that AI responses are grounded in provided source documents, preventing
+# MAGIC > hallucinated or fabricated information."
+# MAGIC > **Sheet gap:** "Would need a multi-layer approach… **nothing has been tested yet**."
+# MAGIC > **How this closes it:** quarantining the untrusted-source fetch stops poisoned/injected
+# MAGIC > content from ever reaching the agent context — a deterministic upstream control that
+# MAGIC > complements downstream groundedness scoring.
+
+# COMMAND ----------
+
+print_policy("policy_04_injection")
 
 # COMMAND ----------
 
@@ -373,6 +491,20 @@ run_scenario("policy_04_injection", "p4",
 # MAGIC An ALLOW-all "tap": every call is permitted, but the attach point + the service's
 # MAGIC `tracing`/`usage_tracking` config produce the audit ledger. The story is the ledger,
 # MAGIC not a verdict. Below: three allowed calls, then the app request-log confirms all three.
+# MAGIC
+# MAGIC > **Customer requirement — originally scoped _Partial_** · *AI Hub — Activity Visibility &
+# MAGIC > Audit Logs* / *Prompt & Response Logging for Audit*
+# MAGIC > "Centrally logs and audits all AI interactions… with timestamps for compliance and
+# MAGIC > forensic investigation."
+# MAGIC > **Sheet gap:** "Logs exist in different platforms — **needs centralized**; Copilot logs
+# MAGIC > are auto-rolled-over and need to be preserved."
+# MAGIC > **How this closes it:** the gateway's `tracing` + `usage_tracking` emit one uniform
+# MAGIC > per-call ledger (system tables) across every governed MCP service — a single, retained
+# MAGIC > source of truth rather than per-platform silos.
+
+# COMMAND ----------
+
+print_policy("policy_05_audit")
 
 # COMMAND ----------
 
@@ -400,6 +532,18 @@ else:
 # MAGIC Block irreversible / privileged mutations at the action layer.
 # MAGIC - **Positive:** `get_record` (read) → ALLOW
 # MAGIC - **Negative:** `delete_record` (destructive) → DENY
+# MAGIC
+# MAGIC > **Customer requirement — originally scoped _Partial_** · *Quarantine / Terminate Risky Agents*
+# MAGIC > "Enables real-time containment and termination of AI agents exhibiting risky behavior
+# MAGIC > patterns or policy violations."
+# MAGIC > **Sheet gap:** "Containment exists but **no AI-specific triggers configured — manual
+# MAGIC > intervention required**."
+# MAGIC > **How this closes it:** destructive tools are auto-denied at request time by policy —
+# MAGIC > the automated, deterministic trigger they lack today, applied before any mutation runs.
+
+# COMMAND ----------
+
+print_policy("policy_06_no_destructive")
 
 # COMMAND ----------
 
@@ -414,6 +558,20 @@ run_scenario("policy_06_no_destructive", "p6",
 # MAGIC Block bulk export and external-send tools at the action layer.
 # MAGIC - **Positive:** `search_notes` (read) → ALLOW
 # MAGIC - **Negative:** `export_dataset` (bulk egress) → DENY
+# MAGIC
+# MAGIC > **Customer requirement — originally scoped _Partial_** · *Insider Risk Detection for AI
+# MAGIC > Usage Anomalies*
+# MAGIC > "Monitors for suspicious AI usage patterns (e.g., bulk data exfiltration via prompts,
+# MAGIC > unauthorized model access)."
+# MAGIC > **Sheet gap:** "Purview IRM has limited visibility — **depends on sensitivity labels and
+# MAGIC > data classification**; without consistent adoption these controls are weak."
+# MAGIC > **How this closes it:** export/external-send tools are denied deterministically at the
+# MAGIC > gateway regardless of labeling accuracy — a hard egress boundary, not a
+# MAGIC > classification-dependent heuristic.
+
+# COMMAND ----------
+
+print_policy("policy_07_no_egress")
 
 # COMMAND ----------
 
@@ -434,6 +592,19 @@ run_scenario("policy_07_no_egress", "p7",
 # MAGIC
 # MAGIC > **Beta note:** ASK surfaces as the same `-32003` error code as DENY; the `reason`
 # MAGIC > ("routed to a human approver") is the differentiator.
+# MAGIC
+# MAGIC > **Customer requirement — originally scoped _Partial_** · *Quarantine / Terminate Risky
+# MAGIC > Agents* (human-in-the-loop angle)
+# MAGIC > "Real-time containment of agents exhibiting risky behavior / policy violations."
+# MAGIC > **Sheet gap:** "**Manual intervention required** — no automated trigger."
+# MAGIC > **How this closes it:** the ASK verdict is the governed handoff — sensitive-but-not-
+# MAGIC > forbidden actions are automatically routed to a human approver instead of relying on
+# MAGIC > ad-hoc manual review, giving a repeatable HITL gate. *(Weakest sheet mapping — the
+# MAGIC > requirements list has no dedicated per-action approval row; confirm framing with the account team.)*
+
+# COMMAND ----------
+
+print_policy("policy_08_ask_human")
 
 # COMMAND ----------
 
@@ -452,7 +623,9 @@ run_scenario("policy_08_ask_human", "p8",
 # COMMAND ----------
 
 attach("policy_06_no_destructive", "p6")
-time.sleep(SETTLE)
+# Poll until enforced (deterministic), then clear the log so the count below is clean.
+wait_until_enforced(("get_record", {"record_id": "P-1001"}),
+                    ("delete_record", {"record_id": "P-1001"}))
 app_clear_log()
 denied = gw(GOV, "delete_record", {"record_id": "P-1001"})
 show("delete_record", denied)
