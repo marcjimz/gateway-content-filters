@@ -2,7 +2,7 @@
 
 **Status:** Draft for review
 **Owners:** Databricks Field Engineering · Customer security & MLOps
-**Last updated:** 2026-06-15
+**Last updated:** 2026-07-01
 
 ---
 
@@ -180,16 +180,76 @@ the customer's 18-item control matrix collapses into the three layers, with one 
 - **Public model-services/mcp-services API is the target workspace-only today** — confirm availability on the customer's workspace (gated-beta enrollment / GA timing); UI or render-driven manual apply is the fallback.
 - **Open:** exemption tickets/approvers (placeholders); PHI depth (prompt-judge vs +NER per HIPAA posture); confirm no model traffic bypasses the gateway; live tool-call-through-MCP denial demo (needs U2M login + MCP-client wiring).
 
+### 9a. MCP service-policy findings (from the §11 demo)
+
+Building the end-to-end MCP action-governance demo surfaced several Beta behaviors and CEL-authoring constraints. These are operational levers/gotchas, not blockers — the demo runs green end-to-end.
+
+- **Policy `reason` is surfaced to the caller** as the JSON-RPC error `message` on a blocked tool call — a genuine UX win (the app can show *why* it was blocked).
+- **DENY and ASK both return JSON-RPC error code `-32003`** on this Beta; ASK is **not** a distinct code. The `reason` text is the only differentiator between a hard deny and a human-in-the-loop escalation. A client that wants to route ASK to an approver must match on reason, not code.
+- **The gateway caches a service's compiled policy set aggressively** — allow **~45 s after any attach/detach PATCH** before testing. Tight A/B loops return stale verdicts. Any "live re-attach" demo must sleep after the PATCH.
+- **A denied call never reaches the upstream MCP server** (negative-proof): the app's request log stays empty for a blocked call, confirming the gateway short-circuits before contacting the connection.
+- **`Content-Type: application/json` is required** on the attach/detach PATCH — omitting it returns **HTTP 500** (not 400), which reads like a server fault but is a client header omission.
+- **CEL transpiler is strict — no null-coalescing.** `IS NOT NULL`, `nvl()`, and `COALESCE()` all fail transpilation (`400 … cannot be transpiled to CEL`). Supported constructs: `IN (...)`, `LIKE` (incl. regex-free shape matches like `'%___-__-____%'` for an SSN), `CONTAINS(x,'literal')`, and multi-`WHEN` `CASE`.
+- **Runtime null-propagation trap.** OR-ing a `false` `CONTAINS` against a `CONTAINS` over an **absent** argument yields `false OR NULL = NULL`, which propagates through the `CASE` — and the gateway treats a non-ALLOW/NULL result as a **generic deny**, *not* a fall-through to `ELSE ALLOW` (a NULL `WHEN` does not skip to `ELSE`). **Author policies to inspect only fields guaranteed present** for the tools they gate; split multi-field checks into separate `WHEN` branches keyed on a present field, or scope by `tool.name`.
+- **Transparent-proxy invocation.** The gateway forwards the path suffix after the service FQN to the connection's `base_path`; the JSON-RPC method goes in the **body**, not the URL. Correct call: `POST {gateway-host}/ai-gateway/mcp-services/<fqn>/` (single trailing slash → app `/mcp/`). Responses are **SSE** (`data: {json}`).
+- **App-side prerequisites** for a Databricks App MCP server behind the gateway: (1) grant the connection's service principal `CAN_USE` on the app, else the app rejects the gateway's OBO call with 401; (2) mount the FastMCP app at `/mcp/` so it serves 200 without a `307` host-losing redirect.
+
 ---
 
 ## 10. Repo layout
 
 ```
 gateway-policy/  guardrails · prompts · endpoints · exceptions   (content guardrails as code)
-service-policies/  CEL UC functions for MCP action governance
+service-policies/  CEL UC functions for MCP action governance (incl. policy_01..08 demo set)
 tools/  render.py · apply.py · validate.py · test_guardrails.py · measure.py · _policy.py
+app/  Databricks App MCP server (FastMCP) with demo tools + in-memory request log
+bin/  deploy_policies.py · setup_services.py · mcp_call.py · query.py   (reproducible demo ops)
+notebooks/  mcp_service_policies_demo.py   (self-verifying 8-scenario walkthrough)
 tests/corpus.yaml · docs/{design.md,poc-results.md} · .github/workflows/validate.yml
 ```
+
+---
+
+## 11. MCP service-policy demo (working reference)
+
+A runnable, self-verifying reference implementation of §5 (agent action governance). It proves all eight action-governance patterns end-to-end against a live AI Gateway, and doubles as the customer-facing walkthrough.
+
+**Components (all in this repo, all parameterized — no hardcoded workspace):**
+
+- **`app/`** — one Databricks App MCP server (FastMCP) exposing demo tools (`echo`, `get_record`, `search_notes`, `get_untrusted_doc`, `delete_record`, `export_dataset`, `send_external`, `admin_reset`, `health`, `get_current_user`) plus an in-memory `/requests` log used for the negative-proof.
+- **Two `mcp-services`** fronting the same app via one UC HTTP connection: `demo_mcp_open` (no policies — the baseline "danger exists" endpoint) and `demo_mcp_governed` (policies attached one at a time to isolate each scenario).
+- **`service-policies/policy_01..08.sql`** — eight discrete CEL-transpilable UC functions (one per scenario; deliberately discrete rather than a parameterized dispatcher — simpler, and sidesteps unverified `config`-plumbing on the Beta).
+- **`notebooks/mcp_service_policies_demo.py`** — the walkthrough. Each scenario is a markdown title + one-line description + positive/negative calls. `run_scenario()` **asserts** the positive ALLOWs and the negative is BLOCKed, so a green run is proof (not just "no crash"). Runs green end-to-end.
+
+**The eight scenarios → requirements / tracker items:**
+
+| # | Scenario | Policy | Negative → verdict | Requirement (§8 tracker) |
+|---|---|---|---|---|
+| 1 | Deterministic allowlist (deny-by-default) | `policy_01_allowlist` | `admin_reset` → DENY | "limit agent actions" — **marketing: deterministic rules** |
+| 2 | PII/PHI DLP on tool input | `policy_02_phi_dlp` | SSN-shaped query → DENY | 12 PII/PHI, 15 DLP |
+| 3 | Content filtering (harmful/toxic) | `policy_03_content_filter` | `text:"…malware"` → DENY | 1–4 harm categories (action-layer first line) |
+| 4 | Indirect prompt-injection quarantine | `policy_04_injection` | `get_untrusted_doc` → DENY | 5/6/9/10 prompt shields (indirect) |
+| 5 | Audit trail of tool calls | `policy_05_audit` (ALLOW-all tap) | — (ledger, not a verdict) | 17 runtime audit |
+| 6 | Destructive-ops deny | `policy_06_no_destructive` | `delete_record` → DENY | 13/"limit agent actions" |
+| 7 | Data-exfiltration / egress deny | `policy_07_no_egress` | `export_dataset` → DENY | 13 network, 15 DLP |
+| 8 | Human-in-the-loop / escalate (ASK) | `policy_08_ask_human` | `delete_record` → ASK | governance exceptions — **marketing: ask a human** |
+
+Scenario 5 attaches an ALLOW-all policy and lets `tracing`/`usage_tracking` (+ the app request log) produce the ledger — the story is the audit trail, not a block. Scenario 8 is the **human-in-the-loop** control: the same class of action that Scenario 6 hard-denies is instead routed to a human approver (ASK), demonstrating deny vs. escalate side by side.
+
+**Reproduce in any workspace** (all steps parameterized):
+
+```bash
+# 1. deploy the MCP server app (see app/README.md), then wire the gateway resources:
+python bin/setup_services.py   --profile <p> --catalog <cat> --schema <schema> --app <app-name>
+#    -> UC HTTP connection (OAuth M2M on the app SP) + demo_mcp_open + demo_mcp_governed
+# 2. create + transpile-validate all eight policies:
+python bin/deploy_policies.py  --profile <p> --catalog <cat> --schema <schema> \
+                               --warehouse <wh> --governed <cat>.<schema>.demo_mcp_governed --validate
+# 3. run the walkthrough (notebook widgets: catalog / schema / open_service / governed_service / app_url):
+#    import notebooks/mcp_service_policies_demo.py and run — green == all verdicts correct.
+```
+
+See §9a for the CEL-authoring and gateway-behavior findings this demo surfaced (caching settle time, `-32003` for both DENY/ASK, null-propagation trap, `Content-Type` requirement).
 
 ---
 

@@ -15,3 +15,7 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+.claude/
+
+# Session memory
+MEMORY.md

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Policy Demo MCP Server</title>
+    <style>
+      body { font-family: system-ui, -apple-system, sans-serif; margin: 3rem auto; max-width: 640px; color: #1b1b1b; }
+      code { background: #f2f2f2; padding: 0.1rem 0.3rem; border-radius: 4px; }
+      ul { line-height: 1.7; }
+    </style>
+  </head>
+  <body>
+    <h1>Policy Demo MCP Server</h1>
+    <p>
+      MCP server exposing demo tools used to exercise
+      <strong>AI Gateway v2 MCP Service Policies</strong>. Reach it through the
+      AI Gateway, not directly.
+    </p>
+    <h2>Demo tools</h2>
+    <ul>
+      <li><code>echo</code> &mdash; benign, allowlisted</li>
+      <li><code>get_record</code> / <code>search_notes</code> &mdash; PHI in tool I/O</li>
+      <li><code>get_untrusted_doc</code> &mdash; indirect prompt injection</li>
+      <li><code>delete_record</code> &mdash; destructive</li>
+      <li><code>export_dataset</code> / <code>send_external</code> &mdash; exfiltration / egress</li>
+      <li><code>admin_reset</code> &mdash; unlisted (deny-by-default)</li>
+    </ul>
+    <h2>Request log</h2>
+    <p>
+      <code>GET /requests</code> &mdash; tool calls that executed &middot;
+      <code>DELETE /requests</code> &mdash; clear the log
+    </p>
+  </body>
+</html>

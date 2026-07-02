@@ -6,11 +6,16 @@
   bin/mcp_call.py github_mcp merge_pull_request '{}'           # -> POLICY_DENIED (no_destructive_ops)
   bin/mcp_call.py github_mcp get_me                            # -> real GitHub data (after U2M login)
 
-Path:  POST <gateway-host>/ai-gateway/mcp-services/<cat>.<schema>.<id>/{tools/call|tools/list}
-Notes: the AI Gateway is on its own host (--host), distinct from the CLI profile host;
+Path:  POST <gateway-host>/ai-gateway/mcp-services/<cat>.<schema>.<id>/
+Notes: the AI Gateway is a TRANSPARENT PROXY -- whatever path follows <id> is appended
+       to the connection's base_path and forwarded upstream. The JSON-RPC method
+       (tools/list, tools/call) goes in the request BODY, NOT the URL. The URL therefore
+       ends in a single trailing slash so the upstream MCP endpoint (base_path "/mcp")
+       is hit at "/mcp/" -- putting the method in the URL yields "/mcp/tools/list" -> 404.
+       The AI Gateway is on its own host (--host), distinct from the CLI profile host;
        requests need Accept: application/json, text/event-stream (responses are SSE).
-       A policy-denied write returns POLICY_DENIED *before* the upstream MCP is contacted;
-       allowed/read tools reach upstream and need its auth (e.g. GitHub U2M login).
+       A policy-denied call returns POLICY_DENIED *before* the upstream MCP is contacted;
+       allowed tools reach upstream and need its auth.
 """
 from __future__ import annotations
 
@@ -47,7 +52,7 @@ def main():
     ap.add_argument("args", nargs="?", default="{}", help="JSON tool arguments")
     ap.add_argument("--list", action="store_true", help="tools/list instead of tools/call")
     ap.add_argument("--profile", default="DEFAULT")
-    ap.add_argument("--parent", default="main.default")
+    ap.add_argument("--parent", default="marcjimz_demo_ws_2_catalog.default")
     ap.add_argument("--host", default=DEFAULT_HOST, help="AI Gateway host (not the CLI profile host)")
     a = ap.parse_args()
     if not a.host:
@@ -59,7 +64,7 @@ def main():
     rpc = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
 
     out = subprocess.run(
-        ["curl", "-sS", "-X", "POST", f"{a.host}/ai-gateway/mcp-services/{fqn}/{method}",
+        ["curl", "-sS", "-X", "POST", f"{a.host}/ai-gateway/mcp-services/{fqn}/",
          "-H", f"Authorization: Bearer {token(a.profile)}",
          "-H", "Content-Type: application/json",
          "-H", "Accept: application/json, text/event-stream",
