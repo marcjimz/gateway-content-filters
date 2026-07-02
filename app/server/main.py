@@ -15,7 +15,7 @@ def main():
     # proxy_headers + forwarded_allow_ips: trust the Databricks Apps proxy so
     # any URL/redirect the app builds uses the external host, not localhost.
     uvicorn.run(
-        "server.app:combined_app",
+        "server.app:asgi_app",
         host="0.0.0.0",
         port=args.port,
         proxy_headers=True,

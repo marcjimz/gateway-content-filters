@@ -76,3 +76,35 @@ async def serve_index():
 
 # Mount the MCP endpoint LAST so the explicit routes above take precedence.
 combined_app.mount("/mcp", mcp_app)
+
+
+class _McpSlashFix:
+    """ASGI shim: rewrite a bare ``/mcp`` request path to ``/mcp/`` in-process.
+
+    Starlette's ``Mount("/mcp", ...)`` issues an HTTP 307 slash-redirect when hit
+    at ``/mcp`` (no trailing slash), and the redirect ``Location`` is built from
+    the internal ASGI host -> ``https://localhost:8000/mcp/``. ``proxy_headers``
+    does not rewrite redirect hosts, so any MCP client that calls the bare
+    ``/mcp`` path (e.g. the AI Playground's UC MCP client, whose connection
+    ``base_path`` is ``/mcp``) receives a 307 to localhost it cannot follow and
+    fails with "status 307". Rewriting the path in the ASGI scope makes the mount
+    match ``/mcp/`` directly and answer 200 with no redirect emitted at all.
+    All non-matching scopes (other paths, lifespan, websocket) pass through
+    untouched so FastAPI startup/shutdown still runs.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope.get("path") == "/mcp":
+            scope = dict(scope)
+            scope["path"] = "/mcp/"
+            if scope.get("raw_path") == b"/mcp":
+                scope["raw_path"] = b"/mcp/"
+        await self.app(scope, receive, send)
+
+
+# Exported ASGI app uvicorn serves (see server/main.py). Wraps the FastAPI
+# instance so the bare-/mcp slash-redirect never reaches the client.
+asgi_app = _McpSlashFix(combined_app)
