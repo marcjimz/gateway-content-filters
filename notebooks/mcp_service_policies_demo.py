@@ -49,8 +49,9 @@
 # MAGIC `NEG == BLOCK`. A failed assert halts the notebook — so a clean run is itself proof that
 # MAGIC every enforcement verdict is correct.
 # MAGIC
-# MAGIC > Tip: the cell right before each scenario calls `print_policy(...)` so you can read the
-# MAGIC > exact SQL rule being enforced before the scenario runs.
+# MAGIC > Tip: the cell right before each scenario calls `print_policy(...)` (SQL policies) or
+# MAGIC > `print_builtin(...)` (the semantic LLM-judge guardrails in 3b/3c) so you can read the
+# MAGIC > exact rule / attach config being enforced before the scenario runs.
 
 # COMMAND ----------
 
@@ -416,6 +417,22 @@ def print_policy(name):
     print(f"# {name}")
     print(POLICIES[name].strip())
 
+
+def print_builtin(handler, model_service, phase, rank=1):
+    """Built-in analog of print_policy(): show the exact attach config for a native
+    LLM-judge guardrail before it runs. Built-ins have no SQL body — the 'policy' *is*
+    this attach shape (POLICY_TYPE_BUILTIN + a system.ai.* handler + options) that the
+    gateway evaluates by calling the model_service. Printing it makes the semantic-path
+    control just as inspectable as the deterministic SQL policies."""
+    cfg = {
+        "policy_type": "POLICY_TYPE_BUILTIN",
+        "handler": handler,
+        "options": {"model_service": model_service, "phases": [phase]},
+        "rank": rank,
+    }
+    print(f"# built-in guardrail: {handler}  (semantic judge, no SQL body)")
+    print(json.dumps(cfg, indent=2))
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -537,6 +554,10 @@ run_scenario("policy_03_content_filter", "p3",
 
 # COMMAND ----------
 
+print_builtin("system.ai.block_unsafe_content", "databricks-gpt-5-nano", "pre_call")
+
+# COMMAND ----------
+
 run_llm_judge("system.ai.block_unsafe_content", "p3_llm_unsafe",
               model_service="databricks-gpt-5-nano", phase="pre_call",
               positive=("echo", {"text": "summarize the patient discharge plan"}),
@@ -552,6 +573,10 @@ run_llm_judge("system.ai.block_unsafe_content", "p3_llm_unsafe",
 # MAGIC attach mechanics, `databricks-gpt-5-nano` as the evaluator.
 # MAGIC - **Positive:** a question with no personal data → ALLOW
 # MAGIC - **Negative:** a message packed with identifiers → BLOCK
+
+# COMMAND ----------
+
+print_builtin("system.ai.block_pii", "databricks-gpt-5-nano", "pre_call")
 
 # COMMAND ----------
 
@@ -638,7 +663,92 @@ print(f"  response body (head): {scan['body_head'][:120]}")
 assert scan["status_code"] == 200, (
     f"expected the external security API to return 200, got {scan['status_code']}")
 print("outbound egress from a UC function is live — wire this to your real scanner.")
-# Clean up the illustration objects (idempotent).
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Scenario 4c — proof: an `http_request` policy **cannot** be the gate (live)
+# MAGIC The cell above proved the outbound call works at the *function* layer. The obvious next
+# MAGIC question is: *can we just put that scanner call inside a policy so the gateway blocks on
+# MAGIC the scanner's verdict?* The answer is **no**, and this cell proves it live rather than
+# MAGIC asserting it. A policy body must transpile to CEL (a small, side-effect-free expression
+# MAGIC language); `http_request` makes a network call and has no CEL equivalent, so **attach is
+# MAGIC rejected**.
+# MAGIC
+# MAGIC We try **both** shapes and expect both to fail identically:
+# MAGIC 1. `http_request` **directly** in the policy body.
+# MAGIC 2. `http_request` **hidden behind a wrapper UC function** the policy calls — the
+# MAGIC    transpiler inlines the wrapper and still rejects it (indirection does not help).
+# MAGIC
+# MAGIC > **Takeaway (architecture):** the enforcement *gate* is deterministic CEL (no I/O, no
+# MAGIC > latency, provable). An external scanner is **enrichment** that runs at the app / UC
+# MAGIC > function layer *alongside* the gate — e.g. score content, write a verdict to a table
+# MAGIC > or tool argument, then a deterministic policy blocks on that verdict. Self-verifying:
+# MAGIC > this cell **asserts the attach fails** with the transpile error.
+
+# COMMAND ----------
+
+def _try_attach_raw(handler_fqn, policy_name):
+    """Attempt a raw policy attach WITHOUT raising; return (ok, message). Used to prove
+    an http_request policy is rejected at attach time (transpile-to-CEL failure)."""
+    body = {"config": {"service_policies": [{
+        "name": policy_name, "policy_type": "POLICY_TYPE_CUSTOM",
+        "handler": f"functions/{handler_fqn}", "rank": 1}]}}
+    r = requests.patch(
+        f"{GATEWAY_HOST}/api/2.1/unity-catalog/mcp-services/{GOV}?update_mask=config.service_policies",
+        headers=_JSON_HDRS, data=json.dumps(body), timeout=60)
+    return r.ok, f"HTTP {r.status_code}: {r.text[:200]}"
+
+
+# Ensure the connection exists (idempotent) so the scanner policy functions compile.
+spark.sql(f"""
+CREATE CONNECTION IF NOT EXISTS {_conn} TYPE HTTP
+OPTIONS (host '{EXT_SECURITY_HOST}', port '443', base_path '/', bearer_token 'none')
+""")
+
+# (1) http_request DIRECTLY in the policy body.
+_p_direct = f"{CATALOG}.{SCHEMA}.policy_ext_scan_direct"
+spark.sql(f"""
+CREATE OR REPLACE FUNCTION {_p_direct}(event VARIANT, config VARIANT)
+RETURNS VARIANT LANGUAGE SQL
+RETURN CASE
+  WHEN event:type::string = 'request'
+   AND (SELECT http_request(conn => '{_conn}', method => 'GET', path => '/').status_code) = 200
+  THEN to_variant_object(named_struct('result','DENY','reason','External scanner flagged content.'))
+  ELSE to_variant_object(named_struct('result','ALLOW','reason','')) END""")
+
+# (2) http_request hidden behind a wrapper UC function the policy calls.
+_p_wrap_fn = f"{CATALOG}.{SCHEMA}.ext_scan_status"
+spark.sql(f"""
+CREATE OR REPLACE FUNCTION {_p_wrap_fn}(payload STRING)
+RETURNS INT
+RETURN (SELECT http_request(conn => '{_conn}', method => 'GET', path => '/').status_code)""")
+_p_wrap = f"{CATALOG}.{SCHEMA}.policy_ext_scan_wrap"
+spark.sql(f"""
+CREATE OR REPLACE FUNCTION {_p_wrap}(event VARIANT, config VARIANT)
+RETURNS VARIANT LANGUAGE SQL
+RETURN CASE
+  WHEN event:type::string = 'request'
+   AND {_p_wrap_fn}(event:context.tool.arguments.text::string) = 200
+  THEN to_variant_object(named_struct('result','DENY','reason','External scanner flagged content.'))
+  ELSE to_variant_object(named_struct('result','ALLOW','reason','')) END""")
+
+for _fqn, _label in ((_p_direct, "http_request directly in policy"),
+                     (_p_wrap, "http_request behind a wrapper UC function")):
+    ok, msg = _try_attach_raw(_fqn, "p_ext_scan_attempt")
+    print(f"  attach [{_label}] -> {'ATTACHED?!' if ok else 'REJECTED'}: {msg}")
+    assert not ok, f"expected attach to be rejected for {_fqn}, but it succeeded"
+    assert "transpiled to CEL" in msg, f"expected transpile-to-CEL rejection, got: {msg}"
+
+print("proven: an http_request policy cannot be the enforcement gate "
+      "(both direct and wrapper forms rejected at attach) — external scan is an "
+      "app/function-layer control alongside the deterministic policy.")
+
+# Clean up the illustration objects (idempotent). A rejected attach never changes the
+# service's policy set, so the next scenario's attach() still starts from a clean slate.
+spark.sql(f"DROP FUNCTION IF EXISTS {_p_direct}")
+spark.sql(f"DROP FUNCTION IF EXISTS {_p_wrap}")
+spark.sql(f"DROP FUNCTION IF EXISTS {_p_wrap_fn}")
 spark.sql(f"DROP FUNCTION IF EXISTS {_scan_fn}")
 spark.sql(f"DROP CONNECTION IF EXISTS {_conn}")
 
